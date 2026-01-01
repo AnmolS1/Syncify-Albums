@@ -7,6 +7,9 @@
 
 Syncify is a tool for synchronising and fetching content from Spotify or YouTube playlists via yt-dlp.
 
+## My fork updates
+
+In this fork, I've updated the `Syncify.py` script to focus on downloading the song files to album folders rather than playlist folders. This allows for better interfacing with Jellyfin, which is all I really wanted out of this. The rest is the exact same.
 
 ## Run using docker-compose
 
