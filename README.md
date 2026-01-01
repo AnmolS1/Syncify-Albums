@@ -17,7 +17,7 @@ In this fork, I've updated `Syncify.py` to focus on downloading song files to al
 services:
   syncify-albums:
     image: discoinfern0/syncify-albums:latest
-    container_name: syncify
+    container_name: syncify-albums
     volumes:
       - /path/to/config:/syncify/config
       - /data/media/syncify:/downloads
