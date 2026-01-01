@@ -9,19 +9,18 @@ Syncify is a tool for synchronising and fetching content from Spotify or YouTube
 
 ## My fork updates
 
-In this fork, I've updated `Syncify.py` to focus on downloading the song files to album folders rather than playlist folders. This allows for better interfacing with Jellyfin, which is all I really wanted out of this. The rest is the exact same.
+In this fork, I've updated `Syncify.py` to focus on downloading song files to album folders rather than playlist folders, still from Spotify playlists. I also included a playlist file generator, which Jellyfin reads automatically when it scans music libraries (the Jellyfin library must be set to contain only music). This allows for better interfacing with Jellyfin and Manet, which is all I really wanted out of this. The rest is the exact same.
 
 ## Run using docker-compose
 
 ```yaml
 services:
-  syncify:
-    image: thewicklowwolf/syncify:latest
+  syncify-albums:
+    image: discoinfern0/syncify-albums:latest
     container_name: syncify
     volumes:
       - /path/to/config:/syncify/config
-      - /data/media/syncify:/syncify/downloads
-      - /etc/localtime:/etc/localtime:ro
+      - /data/media/syncify:/downloads
     ports:
       - 5000:5000
     environment:
@@ -65,5 +64,4 @@ To utilize a cookies file with yt-dlp, follow these steps:
 
 ---
 
-
-https://hub.docker.com/r/thewicklowwolf/syncify
+https://hub.docker.com/r/discoinfern0/syncify-albums
