@@ -3,3 +3,4 @@
 config/
 downloads/
 venv/
+**/.DS_Store
