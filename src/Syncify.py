@@ -337,7 +337,7 @@ class DataHandler:
 				for song in song_list:
 					future = executor.submit(self.download_song, song, playlist)
 					# add each song to the file
-					playlist_file.write(f'../{song["playlist_folder"]}/{song["title"]}\n')
+					playlist_file.write(f'../{song["playlist_folder"]}/{song["title"]}.mp3\n')
 					futures.append(future)
 				
 				concurrent.futures.wait(futures)
@@ -356,7 +356,6 @@ class DataHandler:
 		full_file_path = os.path.join(playlist_folder, title)
 		
 		ydl_opts = {
-			# "logger": self.logger,
 			"stdout": self.logger.info,
 			"stderr": self.logger.error,
 			"ffmpeg_location": "/usr/bin/ffmpeg",
@@ -389,7 +388,7 @@ class DataHandler:
 			ydl_opts["cookiefile"] = self.cookies_path
 		
 		try:
-			yt_downloader = yt_dlp.YoutubeDL(ydl_opts)
+			yt_downloader = yt_dlp.YoutubeDL(ydl_opts) # pyright: ignore[reportArgumentType]
 			self.logger.warning(f"yt_dlp - Starting Download of: {link}")
 			
 			yt_downloader.download([link])
