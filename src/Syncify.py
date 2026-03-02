@@ -222,6 +222,8 @@ class DataHandler:
 			playlist_name = playlist["title"]
 			
 			for track in playlist["tracks"]:
+				self.logger.info(json.dumps(track, indent='\t'))
+				self.logger.info(f'track item: {json.dumps(track, indent="\t")}')
 				track_title = track["title"]
 				artist_str = ", ".join([a["name"] for a in track["artists"]])
 				track_list.append({"Artist": artist_str, "Title": track_title, "Status": "Queued", "Folder": playlist_name, "VideoID": track["videoId"]})
@@ -294,7 +296,11 @@ class DataHandler:
 					os.makedirs(playlist_folder_full_path, exist_ok=True)
 
 					raw_directory_list = os.listdir(playlist_folder_full_path)
-					directory_list = self.list_cleaner(raw_directory_list)
+					directory_list = [
+						self.string_cleaner(os.path.splitext(f)[0]) 
+						for f in raw_directory_list 
+						if f.endswith('.mp3')
+					]
 					
 					if cleaned_full_file_name not in directory_list:
 						song_artist = song["Artist"]
@@ -302,7 +308,7 @@ class DataHandler:
 						
 						if song.get("VideoID"):
 							song_actual_link = self.YOUTUBE_LINK_PREFIX + song["VideoID"]
-							song_list_to_download.append({"title": cleaned_full_file_name, "link": song_actual_link, "playlist_folder": song_album})
+							song_list_to_download.append({"title": cleaned_full_file_name, "link": song_actual_link, "playlist_folder": song_album, "song_album": song_album})
 							self.logger.warning(f"Added Song to Download List: {cleaned_full_file_name} : {song_actual_link}")
 						else:
 							future = executor.submit(self.find_youtube_link, song_artist, song_title)
@@ -310,11 +316,24 @@ class DataHandler:
 							self.logger.warning(f"Searching for Song: {cleaned_full_file_name}")
 					else:
 						self.logger.warning(f"File Already in folder: {cleaned_full_file_name}")
+
+						song_list_to_download.append({
+							"title": cleaned_full_file_name,
+							"link": None,  # Signal that it exists already
+							"playlist_folder": song_album,
+							"song_album": song_album,
+							"skip_download": True  # Flag to skip actual download
+						})
 				
 				for future, file_name, album_name in futures:
 					song_actual_link = future.result()
 					if song_actual_link:
-						song_list_to_download.append({"title": file_name, "link": song_actual_link, "playlist_folder": album_name})
+						song_list_to_download.append({
+							"title": file_name,
+							"link": song_actual_link,
+							"playlist_folder": album_name,
+							"album_name": album_name
+						})
 						self.logger.warning(f"Added Song to Download List: {file_name} : {song_actual_link}")
 					else:
 						self.logger.error(f"No Link Found for: {file_name}")
@@ -329,29 +348,33 @@ class DataHandler:
 		plist_folder = os.path.join(self.download_folder, 'playlists')
 		os.makedirs(plist_folder, exist_ok=True)
 		plist_file_path = os.path.join(plist_folder, f'{playlist["Name"]}.m3u')
-		playlist_file = open(plist_file_path, 'w')
 		
-		try:
-			with concurrent.futures.ThreadPoolExecutor(max_workers=self.thread_limit) as executor:
-				futures = []
-				for song in song_list:
-					future = executor.submit(self.download_song, song, playlist)
-					# add each song to the file
-					playlist_file.write(f'../{song["playlist_folder"]}/{song["title"]}.mp3\n')
-					futures.append(future)
-				
-				concurrent.futures.wait(futures)
-				playlist_file.close()
-		except Exception as e:
-			self.logger.error(f"Error in Download Queue: {str(e)}")
+		with open(plist_file_path, 'w') as playlist_file:
+			for song in song_list:
+				playlist_file.write(f'../{song["playlist_folder"]}/{song["title"]}.mp3\n')
+			
+			songs_to_download = [s for s in song_list if not s.get("skip_download", False)]
+
+			if songs_to_download:
+				with concurrent.futures.ThreadPoolExecutor(max_workers=self.thread_limit) as executor:
+					futures = [
+						executor.submit(self.download_song, song, playlist)
+						for song in songs_to_download
+					]
+					concurrent.futures.wait(futures)
 	
 	def download_song(self, song, playlist):
+		if not song['link']:
+			self.logger.info(f'Skipping due to existing download: {song['title']}')
+			return
+		
 		temp_dir = tempfile.TemporaryDirectory(ignore_cleanup_errors=True)
 		self.media_server_scan_req_flag = True
 		
 		link = song["link"]
 		title = song["title"]
 		playlist_folder = song["playlist_folder"]
+		album_name = song.get('album_name', playlist_folder)
 		sleep = playlist["Sleep"] if playlist["Sleep"] else 0
 		full_file_path = os.path.join(playlist_folder, title)
 		
@@ -373,16 +396,22 @@ class DataHandler:
 					"preferredquality": "0",
 				},
 				{
-					"key": "EmbedThumbnail",
+					"key": "FFmpegMetadata",
+					"add_metadata": True
 				},
 				{
-					"key": "FFmpegMetadata",
+					"key": "EmbedThumbnail",
 				},
 			],
+			"postprocessor_args": {
+				"ffmpeg": ["-metadata", f"album={album_name}"]
+			}
 		}
 		
 		if self.crop_album_art == "true":
-			ydl_opts["postprocessor_args"] = {"thumbnailsconvertor+ffmpeg_o": ["-c:v", "mjpeg", "-vf", "crop='if(gt(ih,iw),iw,ih)':'if(gt(iw,ih),ih,iw)'"]}
+			ydl_opts["postprocessor_args"]["thumbnailsconvertor+ffmpeg_o"] = [
+				"-c:v", "mjpeg", "-vf", "crop='if(gt(ih,iw),iw,ih)':'if(gt(iw,ih),ih,iw)'"
+			]
 		
 		if self.cookies_path:
 			ydl_opts["cookiefile"] = self.cookies_path
