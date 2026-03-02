@@ -5,3 +5,5 @@ downloads/
 venv/
 **/.DS_Store
 .claude/*
+src/._Syncify.py
+**/._*

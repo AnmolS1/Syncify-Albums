@@ -36,6 +36,7 @@ jobs:
           current_version=$(grep -oP "(?<=yt_dlp\[default\]==)\d+(\.\d+)+" requirements.txt || echo "0.0.0")
           echo "LATEST_VERSION=$latest_version" >> $GITHUB_ENV
           echo "CURRENT_VERSION=$current_version" >> $GITHUB_ENV
+          git add .
 
       - name: Compare versions and update requirements.txt if necessary
         if: ${{ env.LATEST_VERSION != env.CURRENT_VERSION }}

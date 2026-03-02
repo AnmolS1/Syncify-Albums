@@ -154,6 +154,8 @@ class DataHandler:
 			album: Any = sp.album_tracks(link)
 			
 			album_name = album_info["name"]
+			album_name = album_name.replace('/', ' - ')
+			album_name = self.string_cleaner(album_name)
 			for item in album["items"]:
 				try:
 					track_title = item["name"]
@@ -198,14 +200,8 @@ class DataHandler:
 					artists_str = ", ".join(artists)
 					# use album name of each song as Folder
 					album_name: str = track["album"]["name"]
-					# specific replacements
 					album_name = album_name.replace('/', ' - ')
-					album_name = album_name.replace(':', ' ')
-					album_name = album_name.replace('.', ' ')
-					# strip leading/trailing spaces
-					album_name = album_name.strip()
-					# get rid of extra spaces in between
-					album_name = ' '.join(album_name.split())
+					album_name = self.string_cleaner(album_name)
 
 					track_list.append({"Artist": artists_str, "Title": track_title, "Status": "Queued", "Folder": album_name})
 				except Exception as e:
@@ -265,8 +261,13 @@ class DataHandler:
 							# Search for Top result specifically
 							top_search_results = self.ytmusic.search(query=cleaned_title, limit=5)
 							cleaned_youtube_title = self.string_cleaner(top_search_results[0]["title"]).lower()
-							if "Top result" in top_search_results[0]["category"] and top_search_results[0]["resultType"] == "song" or top_search_results[0]["resultType"] == "video":
-								cleaned_youtube_artists = ", ".join(self.string_cleaner(x['name'].lower()) for x in top_search_results[0]['artists'])
+							category = top_search_results[0].get("category")
+							if category and "Top result" in category and (top_search_results[0]["resultType"] == "song" or top_search_results[0]["resultType"] == "video"):
+								artists_list = top_search_results[0].get('artists')
+								if artists_list:
+									cleaned_youtube_artists = ", ".join(self.string_cleaner(x['name'].lower()) for x in artists_list)
+								else:
+									cleaned_youtube_artists = ""
 								title_ratio = 100 if cleaned_title in cleaned_youtube_title else fuzz.ratio(cleaned_title, cleaned_youtube_title)
 								artist_ratio = 100 if cleaned_artist in cleaned_youtube_artists else fuzz.ratio(cleaned_artist, cleaned_youtube_artists)
 								if (title_ratio >= 90 and artist_ratio >= 40) or (title_ratio >= 40 and artist_ratio >= 90):
