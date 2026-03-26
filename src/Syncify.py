@@ -22,6 +22,23 @@ from thefuzz import fuzz
 
 from typing import Any
 
+
+class RateLimiter:
+	"""Thread-safe rate limiter that enforces minimum delay between calls."""
+	def __init__(self, min_interval: float):
+		self.min_interval = min_interval
+		self._lock = threading.Lock()
+		self._last_call = 0.0
+
+	def wait(self):
+		with self._lock:
+			now = time.monotonic()
+			elapsed = now - self._last_call
+			if elapsed < self.min_interval:
+				time.sleep(self.min_interval - elapsed)
+			self._last_call = time.monotonic()
+
+
 class DataHandler:
 	YOUTUBE_LINK_PREFIX = "https://www.youtube.com/watch?v="
 	
@@ -43,6 +60,11 @@ class DataHandler:
 		self.spotify_client_id = ""
 		self.spotify_client_secret = ""
 		self.thread_limit = int(os.environ.get("thread_limit", 1))
+		self.yt_search_delay = float(os.environ.get("yt_search_delay", 2.0))
+		self.spotify_page_delay = float(os.environ.get("spotify_page_delay", 0.5))
+		self.playlist_delay = float(os.environ.get("playlist_delay", 60.0))
+		self._yt_rate_limiter = RateLimiter(self.yt_search_delay)
+		self._spotify_rate_limiter = RateLimiter(self.spotify_page_delay)
 		self.media_server_scan_req_flag = False
 		self.crop_album_art = os.getenv("crop_album_art", "false").lower()
 		
@@ -120,6 +142,17 @@ class DataHandler:
 		except Exception as e:
 			self.logger.error(f"Error Saving Playlists: {str(e)}")
 	
+	def _retry_with_backoff(self, func, *args, max_retries=3, base_delay=5.0, **kwargs):
+		for attempt in range(max_retries + 1):
+			try:
+				return func(*args, **kwargs)
+			except Exception as e:
+				if attempt == max_retries:
+					raise
+				delay = base_delay * (2 ** attempt)
+				self.logger.warning(f"API call failed (attempt {attempt + 1}/{max_retries + 1}): {e}. Retrying in {delay}s...")
+				time.sleep(delay)
+
 	def schedule_checker(self):
 		self.logger.warning("Starting periodic checks every 10 minutes to monitor sync start times.")
 		self.logger.warning(f"Current scheduled hours to start sync (in 24-hour format): {self.sync_start_times}")
@@ -180,13 +213,15 @@ class DataHandler:
 			limit = 100
 			all_items = []
 			while offset < number_of_tracks:
+				if offset > 0:
+					self._spotify_rate_limiter.wait()
 				try:
-					results = sp.playlist_items(link, fields=fields, limit=limit, offset=offset)
+					results = self._retry_with_backoff(sp.playlist_items, link, fields=fields, limit=limit, offset=offset)
 				except Exception as e:
 					self.logger.error(f"Error using authenticated account to get playlist: {str(e)}.")
 					self.logger.info(f"Attempting to use anonymous authentication...")
-					results = sp_anon.playlist_items(link, fields=fields, limit=limit, offset=offset)
-				
+					results = self._retry_with_backoff(sp_anon.playlist_items, link, fields=fields, limit=limit, offset=offset)
+
 				if results:
 					all_items.extend(results["items"])
 				offset += limit
@@ -231,10 +266,13 @@ class DataHandler:
 	def find_youtube_link(self, artist, title):
 		try:
 			first_result = None
-			
-			self.ytmusic = YTMusic()
-			search_results = self.ytmusic.search(query=f"{artist} - {title}", filter="songs", limit=5)
-			
+
+			ytmusic = YTMusic()
+			self._yt_rate_limiter.wait()
+			search_results = self._retry_with_backoff(ytmusic.search, query=f"{artist} - {title}", filter="songs", limit=5)
+			if not search_results:
+				return first_result
+
 			cleaned_artist = self.string_cleaner(artist).lower()
 			cleaned_title = self.string_cleaner(title).lower()
 			for item in search_results:
@@ -247,19 +285,22 @@ class DataHandler:
 					for item in search_results:
 						cleaned_youtube_title = self.string_cleaner(item["title"]).lower()
 						cleaned_youtube_artists = ", ".join(self.string_cleaner(x['name'].lower()) for x in item['artists'])
-						
+
 						title_ratio = 100 if all(word in cleaned_title for word in cleaned_youtube_title.split()) else fuzz.ratio(cleaned_title, cleaned_youtube_title)
 						artist_ratio = 100 if cleaned_artist in cleaned_youtube_artists else fuzz.ratio(cleaned_artist, cleaned_youtube_artists)
-						
+
 						if title_ratio >= 90 and artist_ratio >= 90:
 							first_result = self.YOUTUBE_LINK_PREFIX + item["videoId"]
 							break
 						else:
 							# Default to first result if Top result is not found
 							first_result = self.YOUTUBE_LINK_PREFIX + search_results[0]["videoId"]
-							
+
 							# Search for Top result specifically
-							top_search_results = self.ytmusic.search(query=cleaned_title, limit=5)
+							self._yt_rate_limiter.wait()
+							top_search_results = self._retry_with_backoff(ytmusic.search, query=cleaned_title, limit=5)
+							if not top_search_results:
+								break
 							cleaned_youtube_title = self.string_cleaner(top_search_results[0]["title"]).lower()
 							category = top_search_results[0].get("category")
 							if category and "Top result" in category and (top_search_results[0]["resultType"] == "song" or top_search_results[0]["resultType"] == "video"):
@@ -274,7 +315,7 @@ class DataHandler:
 									first_result = self.YOUTUBE_LINK_PREFIX + top_search_results[0]["videoId"]
 		except Exception as e:
 			self.logger.error(f"Error Finding YouTube Link: {str(e)}")
-		
+
 		return first_result
 	
 	def get_download_list(self, playlist):
@@ -445,21 +486,25 @@ class DataHandler:
 			self.sync_in_progress_flag = True
 			self.media_server_scan_req_flag = False
 			self.logger.warning("Sync Task started...")
-			for playlist in self.sync_list:
+			for i, playlist in enumerate(self.sync_list):
 				logging.warning(f'Looking for Playlist Songs on YouTube: {playlist["Name"]}')
 				song_list = self.get_download_list(playlist)
-				
+
 				logging.warning(f'Starting Downloading List: {playlist["Name"]}')
 				self.download_queue(song_list, playlist)
-				
+
 				logging.warning(f'Finished Downloading List: {playlist["Name"]}')
-				
+
 				# the song count is in the file connecting the song names
 				playlist["Song_Count"] = len(song_list)
 				logging.warning(f'Files in Directory: {str(playlist["Song_Count"])}')
-				
+
 				playlist["Last_Synced"] = datetime.datetime.now().strftime("%d-%m-%y %H:%M:%S")
-			
+
+				if i < len(self.sync_list) - 1:
+					self.logger.warning(f"Pausing {self.playlist_delay}s between playlists to avoid rate limiting...")
+					time.sleep(self.playlist_delay)
+
 			self.save_sync_list_to_file()
 			data = {"sync_list": self.sync_list}
 			socketio.emit("Update", data)
@@ -539,14 +584,74 @@ class DataHandler:
 	
 	def manual_start(self):
 		self.logger.warning("Manual Sync Requested.")
-		
+
 		if self.sync_in_progress_flag == True:
 			self.logger.warning(f"Sync already in progress.")
-		
+
 		else:
 			self.logger.warning("Manual Sync Started.")
 			task_thread = threading.Thread(target=self.master_queue, daemon=True)
 			task_thread.start()
+
+	def sync_single_playlist(self, playlist_name):
+		if self.sync_in_progress_flag:
+			self.logger.warning(f"Sync already in progress. Cannot sync '{playlist_name}'.")
+			socketio.emit("sync_playlist_result", {
+				"status": "error",
+				"playlist_name": playlist_name,
+				"message": "A sync is already in progress."
+			})
+			return
+
+		playlist = None
+		for p in self.sync_list:
+			if p["Name"] == playlist_name:
+				playlist = p
+				break
+
+		if not playlist:
+			self.logger.error(f"Playlist '{playlist_name}' not found.")
+			socketio.emit("sync_playlist_result", {
+				"status": "error",
+				"playlist_name": playlist_name,
+				"message": "Playlist not found."
+			})
+			return
+
+		try:
+			self.sync_in_progress_flag = True
+			self.media_server_scan_req_flag = False
+
+			self.logger.warning(f"Single playlist sync started: {playlist_name}")
+			socketio.emit("sync_playlist_started", {"playlist_name": playlist_name})
+
+			song_list = self.get_download_list(playlist)
+			self.download_queue(song_list, playlist)
+
+			playlist["Song_Count"] = len(song_list)
+			playlist["Last_Synced"] = datetime.datetime.now().strftime("%d-%m-%y %H:%M:%S")
+
+			self.save_sync_list_to_file()
+			socketio.emit("Update", {"sync_list": self.sync_list})
+			socketio.emit("sync_playlist_result", {
+				"status": "success",
+				"playlist_name": playlist_name,
+				"message": f"Sync complete for '{playlist_name}'."
+			})
+
+			if self.media_server_scan_req_flag and self.media_server_tokens:
+				self.sync_media_servers()
+
+		except Exception as e:
+			self.logger.error(f"Error syncing playlist '{playlist_name}': {e}")
+			socketio.emit("sync_playlist_result", {
+				"status": "error",
+				"playlist_name": playlist_name,
+				"message": str(e)
+			})
+
+		finally:
+			self.sync_in_progress_flag = False
 
 
 app = Flask(__name__)
@@ -631,6 +736,23 @@ def save_playlists(data):
 @socketio.on("manual_start")
 def manual_start():
 	data_handler.manual_start()
+
+@socketio.on("sync_playlist")
+def sync_playlist(data):
+	playlist_name = data.get("playlist_name")
+	if not playlist_name:
+		socketio.emit("sync_playlist_result", {
+			"status": "error",
+			"playlist_name": "",
+			"message": "No playlist name provided."
+		})
+		return
+	task_thread = threading.Thread(
+		target=data_handler.sync_single_playlist,
+		args=(playlist_name,),
+		daemon=True
+	)
+	task_thread.start()
 
 if __name__ == "__main__":
 	socketio.run(app, host="0.0.0.0", port=5001)

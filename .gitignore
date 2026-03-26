@@ -7,3 +7,4 @@ venv/
 .claude/*
 src/._Syncify.py
 **/._*
+/src/__pycache__

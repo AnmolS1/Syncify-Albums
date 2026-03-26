@@ -34,12 +34,28 @@ Certain values can be set via environment variables:
 * __PGID__: The group ID to run the app with. Defaults to `1000`.
 * __thread_limit__: Max number of threads to use. Defaults to `1`.
 * __crop_album_art__: Set this to `true` to force the creation of square album art instead of using the 16:9 aspect ratio from YouTube. Defaults to `false`.
+* __yt_search_delay__: Seconds to wait between YouTube Music API search calls. Defaults to `2.0`. Increase if you hit rate limits during large syncs.
+* __spotify_page_delay__: Seconds to wait between Spotify playlist pagination requests (per 100-track page). Defaults to `0.5`.
+* __playlist_delay__: Seconds to wait between syncing each playlist during a full sync (auto-scheduled or manual). Defaults to `30.0`. Helps avoid YouTube rate limiting across many playlists.
 
 
 ## Sync Schedule
 
 Use a comma-separated list of hours to search for new tracks (e.g. `2, 20` will initiate a search at 2 AM and 8 PM).
 > Note: There is a deadband of up to 10 minutes from the scheduled start time.
+
+
+## Rate-Limiting Avoidance
+
+When syncing many playlists, YouTube Music's API may rate-limit requests. Three mechanisms are active by default:
+
+1. **Per-search delay** (`yt_search_delay`): A minimum delay is enforced between every YouTube Music search call via a thread-safe rate limiter (default: 2s).
+
+2. **Inter-playlist delay** (`playlist_delay`): After each playlist finishes, the next one waits a configurable period before starting (default: 30s), giving YouTube's rate-limit window time to reset.
+
+3. **Exponential backoff retries**: If a YouTube Music or Spotify API call fails (e.g. a 429 Too Many Requests), it is automatically retried up to 3 times with delays of 5s, 10s, and 20s before giving up.
+
+All three delays are tunable via environment variables (see Configuration section above). Setting any of them to `0` disables that delay.
 
 
 ## Cookies (optional)
