@@ -17,6 +17,28 @@ body {
     width: 60px !important;
 }
 
+.action-buttons {
+    flex-wrap: nowrap;
+    justify-content: start;
+}
+
+.sync-btn {
+    min-width: 36px;
+}
+
+#global-notification {
+    position: fixed;
+    top: 60px;
+    left: 50%;
+    transform: translateX(-50%);
+    z-index: 1060;
+    min-width: 300px;
+    max-width: 500px;
+    text-align: center;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    border-radius: 8px;
+}
+
 ::-webkit-scrollbar {
     width: 12px;
 }
@@ -47,12 +69,16 @@ body {
         width: 55px !important;
     }
     .table{
-        text-align: center; 
-    }    
+        text-align: center;
+    }
     th, td {
-      vertical-align: middle; 
-    }   
+      vertical-align: middle;
+    }
     .container{
         max-height: 75vh;
+    }
+    .action-buttons {
+        flex-direction: column;
+        gap: 0.25rem !important;
     }
 }

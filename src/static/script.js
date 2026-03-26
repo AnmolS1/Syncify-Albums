@@ -24,11 +24,19 @@ function renderPlaylists() {
                 <td>${playlist.Last_Synced}</td>
                 <td>${playlist.Song_Count}</td>
                 <td>
-                    <button class="btn btn-sm btn-primary custom-button-width" data-bs-toggle="modal" data-bs-target="#editModal${index}">Edit</button>
+                    <div class="d-flex gap-1 action-buttons">
+                        <button class="btn btn-sm btn-outline-success sync-btn" data-playlist-name="${playlist.Name}" title="Sync this playlist">
+                            <i class="fa fa-sync"></i>
+                        </button>
+                        <button class="btn btn-sm btn-primary custom-button-width" data-bs-toggle="modal" data-bs-target="#editModal${index}">Edit</button>
+                    </div>
                 </td>
             `;
-        var deleteButton = createDeleteButton(index);
-        row.querySelector("td:last-child").appendChild(deleteButton);
+        var actionDiv = row.querySelector(".action-buttons");
+        actionDiv.appendChild(createDeleteButton(index));
+        row.querySelector(".sync-btn").addEventListener("click", function() {
+            syncPlaylist(playlist.Name, this);
+        });
         syncList.appendChild(row);
     });
 }
@@ -56,8 +64,10 @@ function updated_info(response) {
 }
 
 function createEditModalsAndListeners() {
+    document.querySelectorAll("[id^='editModalWrapper']").forEach(el => el.remove());
     playlists.forEach((playlist, index) => {
         var editModal = document.createElement("div");
+        editModal.id = `editModalWrapper${index}`;
         editModal.innerHTML = `
                 <div class="modal fade" id="editModal${index}" tabindex="-1" role="dialog" aria-labelledby="editModalLabel" aria-hidden="true">                <div class="modal-dialog" role="document">
                     <div class="modal-content">
@@ -85,6 +95,9 @@ function createEditModalsAndListeners() {
                             </form>
                         </div>
                         <div class="modal-footer">
+                            <button type="button" class="btn btn-outline-success" id="syncFromModal${index}">
+                                <i class="fa fa-sync"></i> Sync
+                            </button>
                             <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Close</button>
                             <button type="button" class="btn btn-primary" onclick="savePlaylistSettings(${index})">Save Changes</button>
                         </div>
@@ -93,6 +106,9 @@ function createEditModalsAndListeners() {
             </div>
         `;
         document.body.appendChild(editModal);
+        document.getElementById(`syncFromModal${index}`).addEventListener("click", function() {
+            syncPlaylistFromModal(index);
+        });
     });
 }
 
@@ -109,7 +125,60 @@ function savePlaylistSettings(index) {
     renderPlaylists();
 }
 
+function syncPlaylist(playlistName, buttonElement) {
+    socket.emit("sync_playlist", { "playlist_name": playlistName });
+    if (buttonElement) {
+        buttonElement.disabled = true;
+        buttonElement.innerHTML = '<i class="fa fa-spinner fa-spin"></i>';
+        buttonElement.classList.remove("btn-outline-success");
+        buttonElement.classList.add("btn-secondary");
+    }
+}
+
+function syncPlaylistFromModal(index) {
+    var playlistName = playlists[index].Name;
+    var btn = document.getElementById(`syncFromModal${index}`);
+    socket.emit("sync_playlist", { "playlist_name": playlistName });
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<i class="fa fa-spinner fa-spin"></i> Syncing...';
+        btn.classList.remove("btn-outline-success");
+        btn.classList.add("btn-secondary");
+    }
+}
+
+function showGlobalNotification(message, isSuccess) {
+    var el = document.getElementById("global-notification");
+    if (!el) return;
+    el.textContent = message;
+    el.className = isSuccess ? "alert alert-success" : "alert alert-danger";
+    el.style.display = "block";
+    setTimeout(function() {
+        el.style.display = "none";
+    }, 4000);
+}
+
 socket.on("Update", updated_info);
+
+socket.on("sync_playlist_started", function(data) {
+    showGlobalNotification("Syncing '" + data.playlist_name + "'...", true);
+});
+
+socket.on("sync_playlist_result", function(data) {
+    showGlobalNotification(data.message, data.status === "success");
+    document.querySelectorAll(".sync-btn").forEach(function(btn) {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fa fa-sync"></i>';
+        btn.classList.remove("btn-secondary");
+        btn.classList.add("btn-outline-success");
+    });
+    document.querySelectorAll("[id^='syncFromModal']").forEach(function(btn) {
+        btn.disabled = false;
+        btn.innerHTML = '<i class="fa fa-sync"></i> Sync';
+        btn.classList.remove("btn-secondary");
+        btn.classList.add("btn-outline-success");
+    });
+});
 
 document.getElementById("add-playlist").addEventListener("click", function () {
     playlists.push({ Name: "New Playlist", Link: "", Sleep: 0, Last_Synced: "Never", Song_Count: 0 });
